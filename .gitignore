@@ -18,3 +18,9 @@ env/
 
 # Streamlit
 .streamlit/
+
+# Mac
+.DS_Store
+
+# Local chat logs
+chat_history/

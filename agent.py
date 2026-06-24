@@ -1,6 +1,7 @@
 import os
 from dotenv import load_dotenv
-from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint, HuggingFaceEmbeddings
+from langchain_groq import ChatGroq
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
@@ -16,30 +17,25 @@ dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
 load_dotenv(dotenv_path)
 
 # Verify API Key
-# API Key Handling
 def validate_api_key():
-    """Validates and retrieves the Hugging Face API Token."""
-    api_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+    """Validates and retrieves the Groq API Key."""
+    api_key = os.getenv("GROQ_API_KEY")
 
-    if not api_token:
+    if not api_key:
         try:
             import streamlit as st
-            if "HUGGINGFACEHUB_API_TOKEN" in st.secrets:
-                api_token = st.secrets["HUGGINGFACEHUB_API_TOKEN"]
-            elif "HF_TOKEN" in st.secrets:
-                api_token = st.secrets["HF_TOKEN"]
+            if "GROQ_API_KEY" in st.secrets:
+                api_key = st.secrets["GROQ_API_KEY"]
         except:
             pass
 
-    if not api_token:
-        # Return None instead of raising immediately to allow UI to handle it
+    if not api_key:
         return None
     
-    os.environ["HUGGINGFACEHUB_API_TOKEN"] = api_token
-    return api_token
+    os.environ["GROQ_API_KEY"] = api_key
+    return api_key
 
-# Attempt verification on import, but don't hard crash yet
-_api_token = validate_api_key()
+_api_key = validate_api_key()
 
 
 # Import tools
@@ -58,7 +54,10 @@ from langchain_core.tools import tool
 @tool
 def pdf_tool(file_path: str):
     """Extracts text from a PDF file."""
-    return load_pdf(file_path)
+    docs = load_pdf(file_path)
+    if not docs:
+        return "No content found in the PDF."
+    return "\n\n".join([doc.page_content for doc in docs])
 
 @tool
 def wiki_tool(query: str):
@@ -68,35 +67,25 @@ def wiki_tool(query: str):
 @tool
 def url_tool(url: str):
     """Retrieves content from a URL."""
-    return retrieve_url_content(url)
+    docs = retrieve_url_content(url)
+    if not docs:
+        return "No content found at the URL."
+    return "\n\n".join([doc.page_content for doc in docs])
 
 tools = [pdf_tool, wiki_tool, url_tool]
 
-# Initialize LLM
-# Use Hugging Face Inference API
-# We use a model that supports tool calling or at least follows instructions well
-# Start with a reliable model on the free inference API
-# Zephyr 7B Beta is excellent for following instructions and chat
-repo_id = "HuggingFaceH4/zephyr-7b-beta"
-
-llm = HuggingFaceEndpoint(
-    repo_id=repo_id,
-    task="text-generation",
-    max_new_tokens=512,
-    do_sample=False,
-    repetition_penalty=1.1,
-    stop_sequences=["\n\n", "User:", "---", "[[user"],
-    huggingfacehub_api_token=_api_token,
-)
-
-# Initialize ChatHuggingFace
+# Initialize LLM using Groq (free, fast inference)
 try:
-    if _api_token is None:
-        print("Warning: HuggingFace API Token is missing. Tools and Chat will fail.")
-    chat_model = ChatHuggingFace(llm=llm)
+    if _api_key is None:
+        print("Warning: GROQ_API_KEY is missing. Chat will fail.")
+    chat_model = ChatGroq(
+        model="llama-3.3-70b-versatile",
+        temperature=0,
+        max_tokens=512,
+        api_key=_api_key,
+    )
 except Exception as e:
-    print(f"Error initializing ChatHuggingFace: {e}")
-    # Fallback or re-raise if critical for startup logic
+    print(f"Error initializing ChatGroq: {e}")
     chat_model = None
 
 # Bind tools to the chat model
@@ -120,8 +109,9 @@ def get_retriever(files, urls):
     new_hash = str(sorted(files)) + str(sorted(urls))
     
     if vector_store is not None and new_hash == current_files_hash:
-        return vector_store.as_retriever(search_kwargs={"k": 3})
-    
+        return vector_store.as_retriever(search_kwargs={"k": 3})  # Converts FAISS ie vector store into a retriever object.
+    # Retriever does: Accepts user query, Searches vector store, Returns 3 most relevant chunks
+
     documents = []
     
     # Load PDFs
@@ -167,14 +157,15 @@ def generate_system_prompt(state: State):
     urls = state.get("context_urls", [])
     messages = state.get("messages", [])
     
-    # Get user query from the last message
+    # Find the last human message (search backwards, since last might be a ToolMessage)
     user_query = ""
-    if messages:
-        last_msg = messages[-1]
-        if isinstance(last_msg, HumanMessage):
-            user_query = last_msg.content
-        elif isinstance(last_msg, dict) and last_msg.get("role") == "user":
-             user_query = last_msg.get("content", "")
+    for msg in reversed(messages):
+        if isinstance(msg, HumanMessage):
+            user_query = msg.content
+            break
+        elif isinstance(msg, dict) and msg.get("role") == "user":
+            user_query = msg.get("content", "")
+            break
     
     prompt = """You are a multi-model retrieval-augmented generation (RAG) chatbot capable of processing queries across various domains.
 Your functionalities are categorized as follows:
@@ -238,10 +229,23 @@ graph_builder.add_edge("tools", "chatbot")
 graph = graph_builder.compile()
 
 # Example usage function
-def run_agent(input_text, files=None, urls=None, thread_id="1"):
+def run_agent(input_text, files=None, urls=None, history=None, thread_id="1"):
     config = {"configurable": {"thread_id": thread_id}}
+
+    # Build message list from conversation history so the LLM remembers past turns
+    from langchain_core.messages import AIMessage
+    messages = []
+    if history:
+        for msg in history:
+            if msg["role"] == "user":
+                messages.append(HumanMessage(content=msg["content"]))
+            elif msg["role"] == "assistant":
+                messages.append(AIMessage(content=msg["content"]))
+    # Add the current message
+    messages.append(HumanMessage(content=input_text))
+
     initial_state = {
-        "messages": [HumanMessage(content=input_text)],
+        "messages": messages,
         "context_files": files or [],
         "context_urls": urls or []
     }
@@ -251,7 +255,10 @@ def run_agent(input_text, files=None, urls=None, thread_id="1"):
     final_response = ""
     for event in events:
         if "chatbot" in event:
-            message = event["chatbot"]["messages"][-1]
+            msg_list = event["chatbot"].get("messages", [])
+            if not msg_list:
+                continue
+            message = msg_list[-1]
             content = message.content
             
             # Handle list content (common with Gemini for multimodal/grounding)
@@ -267,3 +274,4 @@ def run_agent(input_text, files=None, urls=None, thread_id="1"):
                 final_response = str(content)
                 
     return final_response
+
