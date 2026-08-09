@@ -18,10 +18,11 @@ def get_otp_expiry() -> str:
     """Returns ISO timestamp for OTP expiry (10 minutes from now)."""
     return (datetime.utcnow() + timedelta(minutes=OTP_EXPIRY_MINUTES)).isoformat()
 
-def send_otp_email(to_email: str, otp: str, username: str) -> bool:
+def send_otp_email(to_email: str, otp: str, username: str) -> tuple:
     """
     Sends OTP verification email via Resend HTTP API.
-    Falls back to terminal print if RESEND_API_KEY is not set.
+    Returns (success: bool, demo_otp: str | None).
+    demo_otp is the OTP code to show in the UI if email delivery was not possible.
     """
     if not RESEND_API_KEY:
         print("\n" + "="*50)
@@ -29,7 +30,7 @@ def send_otp_email(to_email: str, otp: str, username: str) -> bool:
         print(f"  📧 OTP for {username} ({to_email}): {otp}")
         print(f"  ⏰ Expires in {OTP_EXPIRY_MINUTES} minutes")
         print("="*50 + "\n")
-        return True
+        return (True, otp)  # Show OTP in UI for local dev
 
     html_body = f"""
 <!DOCTYPE html>
@@ -97,11 +98,11 @@ def send_otp_email(to_email: str, otp: str, username: str) -> bool:
 
         if response.status_code in (200, 201):
             print(f"✅ OTP email sent via Resend to {to_email}")
-            return True
+            return (True, None)  # Email delivered, don't show OTP in UI
         else:
             raise Exception(f"Resend API error {response.status_code}: {response.text}")
 
     except Exception as e:
         print(f"❌ Failed to send OTP email via Resend: {e}")
         print(f"\n[FALLBACK] OTP for {username}: {otp}\n")
-        return False
+        return (False, otp)  # Return OTP so frontend can display it

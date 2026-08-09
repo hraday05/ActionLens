@@ -92,14 +92,16 @@ def login(request: LoginRequest):
     expires_at = get_otp_expiry()
     store_otp(user["id"], otp, expires_at)
 
-    # Send email (falls back to terminal if SMTP not configured)
-    send_otp_email(request.email, otp, request.username)
+
+    # Send email — returns (success, demo_otp)
+    _sent, demo_otp = send_otp_email(request.email, otp, request.username)
 
     return {
         "user_id": user["id"],
         "username": user["username"],
         "email": user["email"],
-        "message": "OTP sent to your email address. Please check your inbox (or server terminal in local mode)."
+        "demo_otp": demo_otp,  # None if email was delivered; OTP string if shown in UI
+        "message": "OTP sent to your email." if not demo_otp else "Email delivery unavailable — your OTP is shown below."
     }
 
 @app.post("/api/verify-otp")

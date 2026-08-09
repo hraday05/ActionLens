@@ -391,13 +391,28 @@ export default function App() {
           {/* ── Step 2: OTP verification ── */}
           {authStep === 'otp' && pendingUser && (
             <div className="space-y-5 animate-fade-in">
-              <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4 text-center">
-                <Mail className="w-6 h-6 text-blue-400 mx-auto mb-2" />
-                <p className="text-xs text-slate-300 leading-relaxed">
-                  A 6-digit OTP has been sent to <strong className="text-white">{pendingUser.email}</strong>
-                </p>
-                <p className="text-[10px] text-slate-500 mt-1">Check your inbox (or the server terminal if running locally)</p>
-              </div>
+              {pendingUser.demo_otp ? (
+                <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 text-center space-y-3">
+                  <div className="flex items-center justify-center gap-2 text-amber-400">
+                    <KeyRound className="w-5 h-5" />
+                    <span className="text-xs font-bold uppercase tracking-widest">Your OTP Code</span>
+                  </div>
+                  <div className="bg-slate-950 rounded-xl py-4 px-6 border border-amber-500/20">
+                    <p className="text-4xl font-black font-mono tracking-[0.4em] text-amber-300">{pendingUser.demo_otp}</p>
+                  </div>
+                  <p className="text-[10px] text-amber-500/80 leading-relaxed">
+                    Copy this code and paste it below. Expires in 10 minutes.
+                  </p>
+                </div>
+              ) : (
+                <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4 text-center">
+                  <Mail className="w-6 h-6 text-blue-400 mx-auto mb-2" />
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    A 6-digit OTP has been sent to <strong className="text-white">{pendingUser.email}</strong>
+                  </p>
+                  <p className="text-[10px] text-slate-500 mt-1">Check your inbox</p>
+                </div>
+              )}
 
               <form onSubmit={handleVerifyOtp} className="space-y-4">
                 <div>
