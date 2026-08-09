@@ -1,0 +1,16 @@
+services:
+  # ── FastAPI Backend ──────────────────────────────────────────
+  - type: web
+    name: actionlens-backend
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /docs
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false          # You will set this in Render Dashboard → Environment
+      - key: SMTP_EMAIL
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
