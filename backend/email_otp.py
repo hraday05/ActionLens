@@ -1,21 +1,13 @@
 import os
-import ssl
-import smtplib
 import random
 import string
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import requests
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env'))
 
-SMTP_EMAIL = os.getenv("SMTP_EMAIL", "")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
-SMTP_HOST = "smtp.gmail.com"
-SMTP_PORT = 587  # STARTTLS port (more firewall-friendly than 465)
-
-
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 OTP_EXPIRY_MINUTES = 10
 
 def generate_otp() -> str:
@@ -28,26 +20,18 @@ def get_otp_expiry() -> str:
 
 def send_otp_email(to_email: str, otp: str, username: str) -> bool:
     """
-    Sends OTP verification email via Gmail SMTP.
-    Returns True on success, False on failure.
-    If SMTP not configured, prints OTP to terminal for local testing.
+    Sends OTP verification email via Resend HTTP API.
+    Falls back to terminal print if RESEND_API_KEY is not set.
     """
-    if not SMTP_EMAIL or not SMTP_PASSWORD:
-        # Graceful degradation for local testing
+    if not RESEND_API_KEY:
         print("\n" + "="*50)
-        print(f"  ⚠️  SMTP NOT CONFIGURED — LOCAL TESTING MODE")
+        print(f"  ⚠️  RESEND NOT CONFIGURED — LOCAL TESTING MODE")
         print(f"  📧 OTP for {username} ({to_email}): {otp}")
         print(f"  ⏰ Expires in {OTP_EXPIRY_MINUTES} minutes")
         print("="*50 + "\n")
-        return True  # Treat as success so the flow continues
+        return True
 
-    try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"🔐 Your ActionLens OTP: {otp}"
-        msg["From"] = SMTP_EMAIL
-        msg["To"] = to_email
-
-        html_body = f"""
+    html_body = f"""
 <!DOCTYPE html>
 <html>
 <head>
@@ -93,24 +77,31 @@ def send_otp_email(to_email: str, otp: str, username: str) -> bool:
 </body>
 </html>
 """
-        text_body = f"Your ActionLens OTP is: {otp}\nIt expires in {OTP_EXPIRY_MINUTES} minutes.\nDo not share this code with anyone."
 
-        msg.attach(MIMEText(text_body, "plain"))
-        msg.attach(MIMEText(html_body, "html"))
+    try:
+        response = requests.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "from": "ActionLens <onboarding@resend.dev>",
+                "to": [to_email],
+                "subject": f"🔐 Your ActionLens OTP: {otp}",
+                "html": html_body,
+                "text": f"Your ActionLens OTP is: {otp}\nExpires in {OTP_EXPIRY_MINUTES} minutes.\nDo not share this code with anyone.",
+            },
+            timeout=10
+        )
 
-        context = ssl.create_default_context()
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
-            server.ehlo()
-            server.starttls(context=context)
-            server.ehlo()
-            server.login(SMTP_EMAIL, SMTP_PASSWORD)
-            server.sendmail(SMTP_EMAIL, to_email, msg.as_string())
-
-        print(f"✅ OTP email sent to {to_email}")
-        return True
+        if response.status_code in (200, 201):
+            print(f"✅ OTP email sent via Resend to {to_email}")
+            return True
+        else:
+            raise Exception(f"Resend API error {response.status_code}: {response.text}")
 
     except Exception as e:
-        print(f"❌ Failed to send OTP email: {e}")
-        # Fall back to terminal print so dev can still test
+        print(f"❌ Failed to send OTP email via Resend: {e}")
         print(f"\n[FALLBACK] OTP for {username}: {otp}\n")
         return False
